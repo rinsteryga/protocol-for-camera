@@ -54,7 +54,6 @@ void ReceiverWorker::readPendingDatagrams() {
 
 void ReceiverWorker::handleIncomingPacket(const PacketData& packet) {
     const auto& hdr = packet.header;
-
            // Игнорируем пакеты, если это не видеокадр (например, эхо наших же запросов)
     if (hdr.type != MsgType::VideoFrame) return;
 

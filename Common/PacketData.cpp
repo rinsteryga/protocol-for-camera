@@ -40,6 +40,6 @@ std::optional<PacketData> PacketData::fromQBA(const QByteArray &rawData)
     if (qChecksum(tempPacket) != receivedHash)
         return std::nullopt;
 
-    result.payload = rawData.sliced(sizeof(PacketHeader));
+    result.payload = qUncompress(rawData.sliced(sizeof(PacketHeader)));
     return result;
 }
