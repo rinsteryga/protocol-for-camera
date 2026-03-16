@@ -69,7 +69,7 @@ void SenderWorker::processImage(QImage img) {
         qsizetype offset = i * CHUNK_SIZE;
         qsizetype currentChunkSize = std::min<qsizetype>(CHUNK_SIZE, sizeBytes - offset);
 
-        packet.payload = qCompress(QByteArray(reinterpret_cast<const char*>(bits + offset), currentChunkSize));
+        packet.payload = QByteArray(reinterpret_cast<const char*>(bits + offset), currentChunkSize);
 
                // Отправка датаграммы на адрес клиента, который мы узнали из Request
         m_udpSender->writeDatagram(packet.toQBA(), m_targetAddress, m_targetPort);
