@@ -1,7 +1,6 @@
-build/
-
-.qtcreator/
-CMakeLists.txt.user
-.qmlls.ini
-
-.DS_Store
+.user 
+build-*/ 
+debug/ 
+release/ 
+*.obj 
+*.o
