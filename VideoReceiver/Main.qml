@@ -9,22 +9,19 @@ Window {
     title: "Video Receiver"
     color: "#1a1a1a"
 
-    // Отрисовка видео (твой класс QmlImageItem)
     QmlImageItem {
         id: videoDisplay
         anchors.fill: parent
-        // Связываем свойство image из C++ с айтемом
         image: receiver.currentFrame
     }
 
-    // Панель управления (поверх видео)
     Rectangle {
         anchors.top: parent.top
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.margins: 20
         width: 300
         height: 120
-        color: "#CC000000" // Полупрозрачный черный
+        color: "#CC000000"
         radius: 10
         border.color: "#33ffffff"
 
@@ -36,7 +33,7 @@ Window {
                 id: ipField
                 width: 250
                 placeholderText: "Введите IP (например, 127.0.0.1)"
-                text: receiver.serverIp // Связь с C++ свойством
+                text: receiver.serverIp
                 color: "white"
                 background: Rectangle {
                     color: "#333"
@@ -56,7 +53,6 @@ Window {
         }
     }
 
-    // Статус-бар внизу
     Text {
         anchors.bottom: parent.bottom
         anchors.left: parent.left

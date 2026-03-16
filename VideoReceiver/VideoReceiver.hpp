@@ -61,7 +61,7 @@ private:
  */
 class VideoReceiver : public QObject {
     Q_OBJECT
-    QML_ELEMENT // Регистрирует класс в QML: VideoReceiver { ... }
+    QML_ELEMENT
 
     Q_PROPERTY(QImage currentFrame READ currentFrame NOTIFY currentFrameChanged)
     Q_PROPERTY(QString serverIp READ serverIp WRITE setServerIp NOTIFY serverIpChanged)
