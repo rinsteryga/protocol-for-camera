@@ -2,12 +2,10 @@
 
 #include <algorithm>
 
-SenderWorker::SenderWorker(QObject *parent)
-    : QObject(parent)
-{
-}
+SenderWorker::SenderWorker(QObject *parent) : QObject(parent) {}
 
-void SenderWorker::init() {
+void SenderWorker::init()
+{
     m_udpSender = new QUdpSocket(this);
 
     // Привязка к любому доступному локальному порту для возможности настройки опций сокета
@@ -17,14 +15,16 @@ void SenderWorker::init() {
     m_udpSender->setSocketOption(QAbstractSocket::SendBufferSizeSocketOption, 1024 * 1024 * 8);
 }
 
-void SenderWorker::processImage(QImage img) {
-    const uchar* bits = img.constBits();
+void SenderWorker::processImage(QImage img)
+{
+    const uchar *bits = img.constBits();
     qsizetype sizeBytes = img.sizeInBytes();
 
     quint16 totalFragments = (sizeBytes + CHUNK_SIZE - 1) / CHUNK_SIZE;
     m_frameCounter++;
 
-    for (quint16 i = 0; i < totalFragments; ++i) {
+    for (quint16 i = 0; i < totalFragments; ++i)
+    {
         PacketData packet;
         packet.header.type = MsgType::VideoFrame;
         packet.header.frameId = m_frameCounter;
@@ -36,7 +36,7 @@ void SenderWorker::processImage(QImage img) {
         qsizetype offset = i * CHUNK_SIZE;
         qsizetype currentChunkSize = std::min<qsizetype>(CHUNK_SIZE, sizeBytes - offset);
 
-        packet.payload = QByteArray(reinterpret_cast<const char*>(bits + offset), currentChunkSize);
+        packet.payload = QByteArray(reinterpret_cast<const char *>(bits + offset), currentChunkSize);
 
         // Отправка датаграммы на локальный адрес клиента
         m_udpSender->writeDatagram(packet.toQBA(), QHostAddress(QHostAddress::LocalHost), 5555);
@@ -45,8 +45,7 @@ void SenderWorker::processImage(QImage img) {
     emit readyForNextFrame();
 }
 
-VideoSender::VideoSender(QObject *parent)
-    : QObject(parent)
+VideoSender::VideoSender(QObject *parent) : QObject(parent)
 {
     // Регистрация пользовательского типа для системы метаобъектов Qt (Signals/Slots)
     qRegisterMetaType<QImage>("QImage");
@@ -58,46 +57,53 @@ VideoSender::VideoSender(QObject *parent)
     connect(&m_thread, &QThread::finished, m_worker, &QObject::deleteLater);
 
     connect(this, &VideoSender::dispatchImage, m_worker, &SenderWorker::processImage);
-    connect(m_worker, &SenderWorker::readyForNextFrame, this, [this](){
-        m_isWorkerBusy = false;
-    });
+    connect(m_worker, &SenderWorker::readyForNextFrame, this, [this]() { m_isWorkerBusy = false; });
 
     m_thread.start();
 }
 
-VideoSender::~VideoSender() {
+VideoSender::~VideoSender()
+{
     m_thread.quit();
     m_thread.wait();
 }
 
-QVideoSink* VideoSender::sourceSink() const {
+QVideoSink *VideoSender::sourceSink() const
+{
     return m_sourceSink;
 }
 
-void VideoSender::setSourceSink(QVideoSink* sink) {
-    if (m_sourceSink == sink) {
+void VideoSender::setSourceSink(QVideoSink *sink)
+{
+    if (m_sourceSink == sink)
+    {
         return;
     }
 
-    if (m_sourceSink) {
+    if (m_sourceSink)
+    {
         disconnect(m_sourceSink, &QVideoSink::videoFrameChanged, this, &VideoSender::processLocalFrame);
     }
 
     m_sourceSink = sink;
 
-    if (m_sourceSink) {
+    if (m_sourceSink)
+    {
         connect(m_sourceSink, &QVideoSink::videoFrameChanged, this, &VideoSender::processLocalFrame);
     }
 
     emit sourceSinkChanged();
 }
 
-bool VideoSender::active() const {
+bool VideoSender::active() const
+{
     return m_active;
 }
 
-void VideoSender::setActive(bool active) {
-    if (m_active == active) {
+void VideoSender::setActive(bool active)
+{
+    if (m_active == active)
+    {
         return;
     }
 
@@ -105,9 +111,11 @@ void VideoSender::setActive(bool active) {
     emit activeChanged();
 }
 
-void VideoSender::processLocalFrame(const QVideoFrame &frame) {
+void VideoSender::processLocalFrame(const QVideoFrame &frame)
+{
     // Проверка активности трансляции и валидности кадра, а также защита от переполнения очереди
-    if (!m_active || !frame.isValid() || m_isWorkerBusy) {
+    if (!m_active || !frame.isValid() || m_isWorkerBusy)
+    {
         return;
     }
 
@@ -116,7 +124,8 @@ void VideoSender::processLocalFrame(const QVideoFrame &frame) {
     QVideoFrame f = frame;
 
     // Блокировка кадра для чтения и маппинг данных из графического ускорителя в ОЗУ
-    if (!f.map(QVideoFrame::ReadOnly)) {
+    if (!f.map(QVideoFrame::ReadOnly))
+    {
         m_isWorkerBusy = false;
         return;
     }
@@ -124,11 +133,14 @@ void VideoSender::processLocalFrame(const QVideoFrame &frame) {
     QImage img = f.toImage();
     f.unmap();
 
-    if (!img.isNull()) {
+    if (!img.isNull())
+    {
         // Масштабирование кадра для оптимизации сетевого трафика
         img = img.scaled(320, 240, Qt::KeepAspectRatio).convertToFormat(QImage::Format_RGB32);
         emit dispatchImage(img);
-    } else {
+    }
+    else
+    {
         m_isWorkerBusy = false;
     }
 }
