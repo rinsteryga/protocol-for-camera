@@ -8,6 +8,7 @@
 #include <QThread>
 #include <QUdpSocket>
 #include <QVariant>
+#include <QtQml/qqmlregistration.h> // Важно для QML_ELEMENT
 
 #include <unordered_map>
 
@@ -16,8 +17,6 @@ constexpr int CHUNK_SIZE = 1000;
 
 /**
  * @brief Рабочий класс для фонового приема данных по сети.
- * Выполняется в отдельном потоке, чтобы не блокировать графический интерфейс (GUI).
- * Принимает датаграммы, валидирует их и склеивает фрагменты обратно в QImage.
  */
 class ReceiverWorker : public QObject {
     Q_OBJECT
@@ -26,29 +25,22 @@ public:
 
 public slots:
     /**
-     * @brief Инициализирует сокет и начинает прослушивание порта.
-     * Должен вызываться после старта рабочего потока.
+     * @brief Инициализирует сокет. На одном ПК используем порт 5556, чтобы не было конфликта с Sender.
      */
     void init();
 
-private slots:
     /**
-     * @brief Слот, срабатывающий при поступлении новых данных на UDP-порт.
-     * Считывает все доступные датаграммы и передает их на парсинг.
+     * @brief Отправляет UDP-пакет запроса на указанный IP (порт 5555).
      */
+    void sendStartRequest(const QString &ip);
+
+private slots:
     void readPendingDatagrams();
 
 signals:
-    /**
-     * @brief Сигнал об успешной сборке целого кадра (или кадра с допустимыми потерями).
-     * @param img Готовое изображение.
-     */
     void frameAssembled(const QImage &img);
 
 private:
-    /**
-     * @brief Внутренняя структура для накопления фрагментов одного кадра.
-     */
     struct FrameBuffer {
         QByteArray data;
         quint16 chunksReceived = 0;
@@ -57,11 +49,6 @@ private:
         quint16 height = 0;
     };
 
-    /**
-     * @brief Обрабатывает распакованный пакет и помещает его в буфер сборки.
-     * Если получен кусок от нового кадра, принудительно завершает сборку старого.
-     * @param packet Десериализованный пакет с данными.
-     */
     void handleIncomingPacket(const PacketData& packet);
 
     quint32 m_currentRenderedFrame = 0;
@@ -71,40 +58,44 @@ private:
 
 /**
  * @brief Главный класс-менеджер для клиентского приложения (Приемник).
- * Живет в главном потоке. Управляет фоновым Worker'ом и пробрасывает собранные кадры
- * в графический интерфейс QML через систему свойств (Q_PROPERTY).
  */
 class VideoReceiver : public QObject {
     Q_OBJECT
-    /** * @brief Свойство, хранящее текущий кадр.
-     * Доступно для чтения из QML, при обновлении генерирует сигнал currentFrameChanged.
-     */
+    QML_ELEMENT
+
     Q_PROPERTY(QImage currentFrame READ currentFrame NOTIFY currentFrameChanged)
+    Q_PROPERTY(QString serverIp READ serverIp WRITE setServerIp NOTIFY serverIpChanged)
 
 public:
     explicit VideoReceiver(QObject *parent = nullptr);
     ~VideoReceiver();
 
-    /**
-     * @brief Возвращает текущий собранный кадр.
-     */
     QImage currentFrame() const;
 
-signals:
+    QString serverIp() const { return m_serverIp; }
+    void setServerIp(const QString &ip) {
+        if (m_serverIp != ip) {
+            m_serverIp = ip;
+            emit serverIpChanged();
+        }
+    }
+
     /**
-     * @brief Сигнал об изменении текущего кадра (уведомляет QML о необходимости перерисовки).
+     * @brief Метод для вызова из QML (кнопка "Подключиться").
      */
+    Q_INVOKABLE void startStreaming();
+
+signals:
     void currentFrameChanged();
+    void serverIpChanged();
+    void requestStart(const QString &ip);
 
 private slots:
-    /**
-     * @brief Принимает собранный кадр из рабочего потока.
-     * @param img Изображение, готовое к выводу.
-     */
     void onFrameAssembled(const QImage &img);
 
 private:
     QImage m_currentFrame;
+    QString m_serverIp;
     QThread m_thread;
     ReceiverWorker* m_worker = nullptr;
 };

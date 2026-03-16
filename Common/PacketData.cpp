@@ -2,44 +2,34 @@
 
 #include <cstring>
 
-QByteArray PacketData::toQBA() const
-{
+QByteArray PacketData::toQBA() const {
+    QByteArray compressedPayload = qCompress(payload, 5);
+
     QByteArray packet;
-    packet.resize(sizeof(PacketHeader) + payload.size());
+    packet.resize(sizeof(PacketHeader) + compressedPayload.size());
 
     PacketHeader tempHeader = header;
     tempHeader.hash = 0;
 
     std::memcpy(packet.data(), &tempHeader, sizeof(PacketHeader));
-
-    if (!payload.isEmpty()) {
-        std::memcpy(packet.data() + sizeof(PacketHeader), payload.constData(), payload.size());
-    }
+    std::memcpy(packet.data() + sizeof(PacketHeader), compressedPayload.constData(), compressedPayload.size());
 
     quint16 calcHash = qChecksum(packet);
-
     std::memcpy(packet.data() + offsetof(PacketHeader, hash), &calcHash, sizeof(quint16));
 
     return packet;
 }
 
-std::optional<PacketData> PacketData::fromQBA(const QByteArray &rawData)
-{
-    if (rawData.size() < static_cast<qsizetype>(sizeof(PacketHeader)))
-        return std::nullopt;
+std::optional<PacketData> PacketData::fromQBA(const QByteArray &rawData) {
+    if (rawData.size() < (qsizetype)sizeof(PacketHeader)) return std::nullopt;
 
     PacketData result;
     std::memcpy(&result.header, rawData.constData(), sizeof(PacketHeader));
 
-    quint16 receivedHash = result.header.hash;
+    QByteArray compressedPart = rawData.mid(sizeof(PacketHeader));
+    if (!compressedPart.isEmpty()) {
+        result.payload = qUncompress(compressedPart);
+    }
 
-    QByteArray tempPacket = rawData;
-    quint16 zeroHash = 0;
-    std::memcpy(tempPacket.data() + offsetof(PacketHeader, hash), &zeroHash, sizeof(quint16));
-
-    if (qChecksum(tempPacket) != receivedHash)
-        return std::nullopt;
-
-    result.payload = rawData.sliced(sizeof(PacketHeader));
     return result;
 }

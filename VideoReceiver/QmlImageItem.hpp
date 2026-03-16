@@ -14,7 +14,7 @@
  */
 class QmlImageItem : public QQuickPaintedItem {
     Q_OBJECT
-
+    QML_ELEMENT // Автоматически регистрирует класс в QML под именем QmlImageItem
     /**
      * @brief Свойство изображения, доступное из QML для биндинга.
      */

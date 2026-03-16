@@ -1,49 +1,38 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(VideoSender VERSION 0.1 LANGUAGES CXX)
+project(VideoProtocolProject VERSION 0.1 LANGUAGES CXX)
 
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Quick Multimedia Network)
+# Ищем все нужные пакеты один раз здесь
+find_package(Qt6 REQUIRED COMPONENTS Core Network Multimedia Quick)
 
 qt_standard_project_setup(REQUIRES 6.8)
 
+# 1. Сначала собираем общую библиотеку (протокол)
 add_subdirectory(Common)
 
+# 2. Собираем SENDER (он использует файлы в текущей папке и линкует Protocol)
 qt_add_executable(appVideoSender
     main.cpp
     VideoSender.hpp
     VideoSender.cpp
 )
 
-qt_add_qml_module(appVideoSender
-    URI VideoSender
-    QML_FILES
-        Main.qml
-        RESOURCES README.md
-        RESOURCES .clang-format
-)
-
+# Оставляем консоль для отладки
 set_target_properties(appVideoSender PROPERTIES
-    MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
-    MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}
-    MACOSX_BUNDLE TRUE
-    WIN32_EXECUTABLE TRUE
+    WIN32_EXECUTABLE FALSE
+    MACOSX_BUNDLE FALSE
 )
 
 target_link_libraries(appVideoSender
     PRIVATE
-        Qt6::Quick
-        Qt6::Multimedia
+        Qt6::Core
         Qt6::Network
+        Qt6::Multimedia
         Protocol
 )
 
-include(GNUInstallDirs)
-install(TARGETS appVideoSender
-    BUNDLE DESTINATION .
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-)
-
+# 3. Подключаем подпапку ресивера
 add_subdirectory(VideoReceiver)
