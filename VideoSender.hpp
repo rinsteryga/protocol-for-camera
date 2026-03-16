@@ -1,7 +1,6 @@
 #pragma once
 
 #include "PacketData.hpp"
-
 #include <QHostAddress>
 #include <QImage>
 #include <QObject>
@@ -10,6 +9,9 @@
 #include <QVariant>
 #include <QVideoFrame>
 #include <QVideoSink>
+#include <QMediaCaptureSession> // Добавлено для консоли
+#include <QCamera>               // Добавлено для консоли
+#include <QMediaDevices>         // Добавлено для консоли
 
 #include <atomic>
 
@@ -26,46 +28,26 @@ class SenderWorker : public QObject
 {
     Q_OBJECT
 public:
-    /**
-     * @brief Конструктор класса SenderWorker.
-     * @param parent Указатель на родительский объект QObject.
-     */
     explicit SenderWorker(QObject *parent = nullptr);
 
 public slots:
-    /**
-     * @brief Инициализация сетевых ресурсов.
-     * * Создает сокет, привязывает его к системному порту и расширяет
-     * размер буфера отправки операционной системы для предотвращения
-     * потери пакетов при высокой нагрузке.
-     */
     void init();
-
-    /**
-     * @brief Обработка и отправка кадра.
-     * * Производит расчет необходимого количества фрагментов, разбивает
-     * сырой массив пикселей на части, формирует сетевые пакеты и
-     * отправляет их целевому узлу.
-     * * @param img Изображение, подготовленное для передачи.
-     */
     void processImage(QImage img);
+    void readPendingDatagrams(); // Слот для приема запроса "START"
 
 signals:
-    /**
-     * @brief Сигнал, уведомляющий об окончании отправки текущего кадра.
-     * * Используется для синхронизации с основным потоком и снятия
-     * блокировки на захват следующего кадра.
-     */
     void readyForNextFrame();
 
 private:
     QUdpSocket *m_udpSender = nullptr;
     quint32 m_frameCounter = 0;
+    QHostAddress m_targetAddress; // IP клиента (Receiver)
+    quint16 m_targetPort = 0;     // Порт клиента
+    bool m_isStreaming = false;   // Флаг: получили ли мы запрос на стрим
 };
-
 /**
  * @brief Контроллер захвата и управления трансляцией видео.
- * * Функционирует в главном потоке (GUI Thread). Выполняет перехват
+ * * Функционирует в главном потоке. Выполняет перехват
  * кадров с устройства записи, их конвертацию в оптимальный формат
  * и диспетчеризацию в рабочий поток для последующей отправки.
  */
@@ -124,9 +106,13 @@ private:
     QVideoSink *m_sourceSink = nullptr;
     bool m_active = false;
 
-    /// Атомарный флаг состояния занятости фонового потока (Drop-frame механизм).
+           /// Атомарный флаг состояния занятости фонового потока (Drop-frame механизм).
     std::atomic<bool> m_isWorkerBusy{false};
 
-    QThread m_thread;
+    QThread m_workerThread; // Переименовал для ясности
     SenderWorker *m_worker = nullptr;
+
+           // Объекты для захвата без QML (Headless mode)
+    QCamera* m_camera = nullptr;
+    QMediaCaptureSession* m_captureSession = nullptr;
 };

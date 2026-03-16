@@ -1,30 +1,63 @@
 #include "VideoSender.hpp"
 
 #include <algorithm>
+#include <QDebug>
+#include <QNetworkDatagram>
 
-SenderWorker::SenderWorker(QObject *parent) : QObject(parent) {}
+// --- SenderWorker Implementation ---
 
-void SenderWorker::init()
+SenderWorker::SenderWorker(QObject *parent)
+    : QObject(parent)
 {
-    m_udpSender = new QUdpSocket(this);
-
-    // Привязка к любому доступному локальному порту для возможности настройки опций сокета
-    m_udpSender->bind(QHostAddress(QHostAddress::LocalHost), 0);
-
-    // Расширение буфера отправки ОС до 8 МБ
-    m_udpSender->setSocketOption(QAbstractSocket::SendBufferSizeSocketOption, 1024 * 1024 * 8);
 }
 
-void SenderWorker::processImage(QImage img)
-{
-    const uchar *bits = img.constBits();
+void SenderWorker::init() {
+    m_udpSender = new QUdpSocket(this);
+
+           // Привязываемся к порту 5555 на всех интерфейсах, чтобы принимать запросы от клиента
+    m_udpSender->bind(QHostAddress::AnyIPv4, 5555);
+
+           // Расширение буфера отправки ОС до 8 МБ для стабильной передачи видео
+    m_udpSender->setSocketOption(QAbstractSocket::SendBufferSizeSocketOption, 1024 * 1024 * 8);
+
+           // Подключаем чтение входящих команд (запросов на подключение)
+    connect(m_udpSender, &QUdpSocket::readyRead, this, &SenderWorker::readPendingDatagrams);
+
+    qInfo() << "SenderWorker: Инициализирован. Ожидание запроса на порт 5555...";
+}
+
+void SenderWorker::readPendingDatagrams() {
+    while (m_udpSender->hasPendingDatagrams()) {
+        QNetworkDatagram datagram = m_udpSender->receiveDatagram();
+
+        // Пытаемся десериализовать пакет
+        auto optPacket = PacketData::fromQBA(datagram.data());
+
+        // Если пришел пакет типа Request — запоминаем, куда слать видео
+        if (optPacket && optPacket->header.type == MsgType::Request) {
+            m_targetAddress = datagram.senderAddress();
+            m_targetPort = datagram.senderPort();
+            m_isStreaming = true;
+
+            qInfo() << "SenderWorker: Получен запрос START от" << m_targetAddress.toString() << ":" << m_targetPort;
+        }
+    }
+}
+
+void SenderWorker::processImage(QImage img) {
+    // Если клиент еще не подключился, ничего не шлем
+    if (!m_isStreaming) {
+        emit readyForNextFrame();
+        return;
+    }
+
+    const uchar* bits = img.constBits();
     qsizetype sizeBytes = img.sizeInBytes();
 
     quint16 totalFragments = (sizeBytes + CHUNK_SIZE - 1) / CHUNK_SIZE;
     m_frameCounter++;
 
-    for (quint16 i = 0; i < totalFragments; ++i)
-    {
+    for (quint16 i = 0; i < totalFragments; ++i) {
         PacketData packet;
         packet.header.type = MsgType::VideoFrame;
         packet.header.frameId = m_frameCounter;
@@ -36,86 +69,115 @@ void SenderWorker::processImage(QImage img)
         qsizetype offset = i * CHUNK_SIZE;
         qsizetype currentChunkSize = std::min<qsizetype>(CHUNK_SIZE, sizeBytes - offset);
 
-        packet.payload = QByteArray(reinterpret_cast<const char *>(bits + offset), currentChunkSize);
+        packet.payload = QByteArray(reinterpret_cast<const char*>(bits + offset), currentChunkSize);
 
-        // Отправка датаграммы на локальный адрес клиента
-        m_udpSender->writeDatagram(packet.toQBA(), QHostAddress(QHostAddress::LocalHost), 5555);
+               // Отправка датаграммы на адрес клиента, который мы узнали из Request
+        m_udpSender->writeDatagram(packet.toQBA(), m_targetAddress, m_targetPort);
     }
 
     emit readyForNextFrame();
 }
 
-VideoSender::VideoSender(QObject *parent) : QObject(parent)
+// --- VideoSender Implementation ---
+
+VideoSender::VideoSender(QObject *parent)
+    : QObject(parent)
 {
-    // Регистрация пользовательского типа для системы метаобъектов Qt (Signals/Slots)
+    // Регистрация пользовательского типа для системы метаобъектов Qt
     qRegisterMetaType<QImage>("QImage");
 
     m_worker = new SenderWorker();
-    m_worker->moveToThread(&m_thread);
+    m_worker->moveToThread(&m_workerThread);
 
-    connect(&m_thread, &QThread::started, m_worker, &SenderWorker::init);
-    connect(&m_thread, &QThread::finished, m_worker, &QObject::deleteLater);
+    connect(&m_workerThread, &QThread::started, m_worker, &SenderWorker::init);
+    connect(&m_workerThread, &QThread::finished, m_worker, &QObject::deleteLater);
 
     connect(this, &VideoSender::dispatchImage, m_worker, &SenderWorker::processImage);
-    connect(m_worker, &SenderWorker::readyForNextFrame, this, [this]() { m_isWorkerBusy = false; });
+    connect(m_worker, &SenderWorker::readyForNextFrame, this, [this](){
+        m_isWorkerBusy = false;
+    });
 
-    m_thread.start();
+    m_workerThread.start();
+
+           // Инициализация захвата видео для консольного режима (Orange Pi)
+    auto cameras = QMediaDevices::videoInputs();
+    if (!cameras.isEmpty()) {
+        qInfo() << "VideoSender: Найдена камера:" << cameras.first().description();
+
+        m_camera = new QCamera(cameras.first(), this);
+        m_captureSession = new QMediaCaptureSession(this);
+
+        // Создаем внутренний сток для перехвата кадров
+        m_sourceSink = new QVideoSink(this);
+
+        m_captureSession->setCamera(m_camera);
+        m_captureSession->setVideoSink(m_sourceSink);
+
+               // Подключаем обработку кадров
+        connect(m_sourceSink, &QVideoSink::videoFrameChanged, this, &VideoSender::processLocalFrame);
+
+               // Автозапуск
+        m_active = true;
+        m_camera->start();
+    } else {
+        qWarning() << "VideoSender: Камеры не найдены!";
+    }
 }
 
-VideoSender::~VideoSender()
-{
-    m_thread.quit();
-    m_thread.wait();
+VideoSender::~VideoSender() {
+    m_workerThread.quit();
+    m_workerThread.wait();
 }
 
-QVideoSink *VideoSender::sourceSink() const
-{
+// Геттеры и сеттеры свойств
+
+QVideoSink* VideoSender::sourceSink() const {
     return m_sourceSink;
 }
 
-void VideoSender::setSourceSink(QVideoSink *sink)
-{
-    if (m_sourceSink == sink)
-    {
+void VideoSender::setSourceSink(QVideoSink* sink) {
+    if (m_sourceSink == sink) {
         return;
     }
 
-    if (m_sourceSink)
-    {
+           // Отключаемся от старого стока
+    if (m_sourceSink) {
         disconnect(m_sourceSink, &QVideoSink::videoFrameChanged, this, &VideoSender::processLocalFrame);
     }
 
     m_sourceSink = sink;
 
-    if (m_sourceSink)
-    {
+           // Подключаемся к новому стоку (если он пришел из QML)
+    if (m_sourceSink) {
         connect(m_sourceSink, &QVideoSink::videoFrameChanged, this, &VideoSender::processLocalFrame);
     }
 
     emit sourceSinkChanged();
 }
 
-bool VideoSender::active() const
-{
+bool VideoSender::active() const {
     return m_active;
 }
 
-void VideoSender::setActive(bool active)
-{
-    if (m_active == active)
-    {
+void VideoSender::setActive(bool active) {
+    if (m_active == active) {
         return;
     }
 
     m_active = active;
+
+           // Если у нас есть камера, управляем её состоянием
+    if (m_camera) {
+        if (m_active) m_camera->start();
+        else m_camera->stop();
+    }
+
     emit activeChanged();
 }
 
-void VideoSender::processLocalFrame(const QVideoFrame &frame)
-{
+void VideoSender::processLocalFrame(const QVideoFrame &frame) {
     // Проверка активности трансляции и валидности кадра, а также защита от переполнения очереди
-    if (!m_active || !frame.isValid() || m_isWorkerBusy)
-    {
+    if (!m_active || !frame.isValid() || m_isWorkerBusy) {
         return;
     }
 
@@ -123,9 +185,8 @@ void VideoSender::processLocalFrame(const QVideoFrame &frame)
 
     QVideoFrame f = frame;
 
-    // Блокировка кадра для чтения и маппинг данных из графического ускорителя в ОЗУ
-    if (!f.map(QVideoFrame::ReadOnly))
-    {
+           // Блокировка кадра для чтения и маппинг данных из графического ускорителя в ОЗУ
+    if (!f.map(QVideoFrame::ReadOnly)) {
         m_isWorkerBusy = false;
         return;
     }
@@ -133,14 +194,14 @@ void VideoSender::processLocalFrame(const QVideoFrame &frame)
     QImage img = f.toImage();
     f.unmap();
 
-    if (!img.isNull())
-    {
-        // Масштабирование кадра для оптимизации сетевого трафика
-        img = img.scaled(320, 240, Qt::KeepAspectRatio).convertToFormat(QImage::Format_RGB32);
+    if (!img.isNull()) {
+        // Масштабирование кадра и конвертация для Orange Pi (производительность)
+        // Используем FastTransformation для экономии CPU
+        img = img.scaled(320, 240, Qt::KeepAspectRatio, Qt::FastTransformation)
+                  .convertToFormat(QImage::Format_RGB32);
+
         emit dispatchImage(img);
-    }
-    else
-    {
+    } else {
         m_isWorkerBusy = false;
     }
 }
